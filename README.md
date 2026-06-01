@@ -31,15 +31,33 @@ User question (plain English)
     └── Agent writes SQL → execute_query → SQLite → plain English answer
 ```
 
-### Read-only guardrail
+### Application-level sandboxing
 
-The agent can never modify your data. Two enforced layers:
-- **sqlglot** — rejects any SQL that is not a SELECT before it reaches the database
-- **Read-only SQLite connection** — the connection itself is opened read-only at the OS level
+LLM agents are capable of generating and executing arbitrary SQL. Without constraints, a misbehaving or prompt-injected agent could run `DROP TABLE transactions`, `DELETE FROM budgets`, or an `UPDATE` that silently corrupts your data. Trusting the model to "just not do that" is not a safe default.
+
+This app enforces a read-only sandbox at two independent layers so that even if one fails, the other still holds:
+
+- **Layer 1 — sqlglot (parse-time check):** Every SQL string the agent produces is parsed by sqlglot before it reaches the database. If the statement is anything other than a `SELECT` (including CTEs that resolve to a SELECT), it is rejected outright and the agent receives an error. This catches malicious or accidental writes at the application level, before any I/O happens.
+
+- **Layer 2 — read-only SQLite connection:** The database connection itself is opened with `sqlite3.connect("file:transactions.db?mode=ro", uri=True)`. This is an OS-level flag — SQLite will refuse any write operation on this connection regardless of what SQL is sent. Even if Layer 1 were bypassed, the database file cannot be modified.
+
+The two layers defend against different failure modes: Layer 1 catches the intent (bad SQL), Layer 2 catches the execution (bad connection). Together they ensure your transaction history is never modified by the agent under any circumstances.
 
 ### Multi-agent CSV loading
 
-Merchant categorisation uses parallel agents — one per batch of 50 unique merchants. On a 500-merchant statement, 10 agents run simultaneously instead of one large sequential call.
+When you upload a bank statement, every unique merchant name needs to be categorised (Food, Transport, Shopping, etc.). Sending all merchants to a single LLM call has two problems: it hits context-length limits on large statements, and it processes everything sequentially — the second half waits for the first half to finish.
+
+Instead, the app splits merchants into batches of 50 and spawns one independent agent per batch, all running in parallel via `ThreadPoolExecutor`. Each agent only sees its own slice of merchants and returns results concurrently.
+
+**Why this matters in practice:**
+
+| Statement size | Sequential (1 agent) | Parallel (N agents) |
+|---|---|---|
+| 50 merchants | 1 call, ~3s | 1 call, ~3s |
+| 200 merchants | 4 calls in series, ~12s | 4 calls in parallel, ~3s |
+| 500 merchants | 10 calls in series, ~30s | 10 calls in parallel, ~3s |
+
+Wall-clock time stays roughly constant regardless of statement size — the slowest single batch determines the total wait, not the sum of all batches. The batch size (50) is tunable via `CATEGORIZER_BATCH_SIZE` in `finance_advisor/config.py`.
 
 ---
 
