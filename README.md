@@ -76,7 +76,7 @@ Get a Logfire token (optional) at [logfire.pydantic.dev](https://logfire.pydanti
 
 **Run:**
 ```bash
-uv run streamlit run finance_app.py
+uv run streamlit run main.py
 ```
 
 ---

@@ -1,13 +1,9 @@
 import streamlit as st
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 
-from finance_agent import (
-    clear_db,
-    db_exists,
-    finance_agent,
-    get_transaction_count,
-    load_csv_to_db,
-)
+from finance_advisor.agent import finance_agent
+from finance_advisor.csv_loader import load_csv_to_db
+from finance_advisor.database import clear_db, db_exists, get_transaction_count
 
 st.set_page_config(page_title="Finance Auditor", page_icon="💰", layout="wide")
 
@@ -23,7 +19,6 @@ with st.sidebar:
     st.title("💰 Finance Auditor")
     st.divider()
 
-    # DB status
     if db_exists():
         count = get_transaction_count()
         st.success(f"✓ {count} transactions loaded")
@@ -55,7 +50,6 @@ with st.sidebar:
                             )
                             for desc in ambiguous:
                                 st.write(f"• {desc}")
-                    # reset conversation when new data is loaded
                     st.session_state.display_messages = []
                     st.session_state.agent_messages = []
                     st.rerun()
@@ -108,19 +102,15 @@ if not db_exists():
     st.info("👈 Upload a bank statement CSV from the sidebar to get started.")
     st.stop()
 
-# Render conversation history
 for msg in st.session_state.display_messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# New user input
 if prompt := st.chat_input("e.g. How much did I spend on food last month?"):
-    # Show user message immediately
     st.session_state.display_messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Run agent and stream response
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             result = finance_agent.run_sync(
